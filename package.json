@@ -6,6 +6,6 @@
   "description": "Kage module",
   "main": "dist/index.js",
   "scripts": {
-    "test": "node tests/structure/check.test.js"
+    "test": "node tests/structure/check.test.js && node tests/structure/docker.test.js"
   }
 }

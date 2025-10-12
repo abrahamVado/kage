@@ -1,0 +1,107 @@
+# //1.- Define all runtime services so the product team can boot the entire stack with one command.
+version: "3.9"
+
+services:
+  backend:
+    # //2.- Build the Go development image that runs Air for hot reloading.
+    build:
+      context: ..
+      dockerfile: deploy/backend/Dockerfile
+    command: ["air", "-c", "/workspace/deploy/backend/air.toml"]
+    working_dir: /workspace/backend
+    environment:
+      - BACKEND_HTTP_PORT=8080
+      - BACKEND_DB_DSN=kage:kagepass@tcp(database:3306)/kagedb
+      - BACKEND_AUTH_SECRET=dev-secret
+    volumes:
+      - ../backend:/workspace/backend:delegated
+      - ../deploy/backend/air.toml:/workspace/deploy/backend/air.toml:ro
+      - go_pkg:/go/pkg/mod
+    ports:
+      - "8080:8080"
+    depends_on:
+      database:
+        condition: service_healthy
+    networks:
+      - kage-internal
+
+  frontend:
+    # //3.- Build the Next.js development environment with hot reloading enabled.
+    build:
+      context: ..
+      dockerfile: deploy/frontend/Dockerfile
+    working_dir: /workspace/frontend
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_BASE_URL=http://backend:8080
+    volumes:
+      - ../frontend:/workspace/frontend:delegated
+      - frontend_node_modules:/workspace/frontend/node_modules
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - kage-internal
+
+  mobile:
+    # //4.- Build the Flutter environment to target the web-server device for quick iteration.
+    build:
+      context: ..
+      dockerfile: deploy/mobile/Dockerfile
+    working_dir: /workspace/mobile
+    environment:
+      - FLUTTER_WEB_PORT=8082
+      - API_BASE_URL=http://backend:8080
+    volumes:
+      - ../mobile:/workspace/mobile:delegated
+      - flutter_pub_cache:/root/.pub-cache
+    ports:
+      - "8082:8082"
+    depends_on:
+      - backend
+    networks:
+      - kage-internal
+
+  database:
+    # //5.- Build the MariaDB container that persists developer data between restarts.
+    build:
+      context: ..
+      dockerfile: deploy/database/Dockerfile
+    environment:
+      - MARIADB_DATABASE=kagedb
+      - MARIADB_USER=kage
+      - MARIADB_PASSWORD=kagepass
+      - MARIADB_ROOT_PASSWORD=devroot
+    volumes:
+      - database_data:/var/lib/mysql
+    healthcheck:
+      # //6.- Wait for MariaDB to become reachable before dependent services continue booting.
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    ports:
+      - "3306:3306"
+    networks:
+      - kage-internal
+
+networks:
+  kage-internal:
+    # //7.- Provide a shared internal bridge network for service-to-service communication.
+    driver: bridge
+
+volumes:
+  database_data:
+    # //8.- Persist MariaDB data between container restarts.
+    driver: local
+  frontend_node_modules:
+    # //9.- Cache npm installs inside the container to speed up boot times.
+    driver: local
+  flutter_pub_cache:
+    # //10.- Persist the Flutter pub cache so dependencies are not re-downloaded each run.
+    driver: local
+  go_pkg:
+    # //11.- Share compiled Go modules between runs for faster rebuilds.
+    driver: local
