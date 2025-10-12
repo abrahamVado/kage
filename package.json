@@ -4,5 +4,8 @@
   "private": true,
   "type": "module",
   "description": "Kage module",
-  "main": "dist/index.js"
+  "main": "dist/index.js",
+  "scripts": {
+    "test": "node tests/structure/check.test.js"
+  }
 }
