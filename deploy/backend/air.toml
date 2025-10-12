@@ -1,0 +1,15 @@
+# //1.- Watch for Go source changes while keeping generated artifacts in the tmp directory.
+root = "."
+tmp_dir = "tmp"
+
+[build]
+# //2.- Use go run to execute the HTTP server with live reload semantics.
+cmd = "go run ./cmd/server"
+bin = "tmp/main"
+include_ext = ["go"]
+exclude_dir = ["deploy", "docs", "tmp"]
+
+[log]
+# //3.- Emit timestamped, colorized logs for easier troubleshooting.
+color = true
+time = true
