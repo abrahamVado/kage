@@ -101,3 +101,86 @@ func TestEvaluateBidsUnauthorized(t *testing.T) {
 		t.Fatalf("arbiter should not persist bids on unauthorized request")
 	}
 }
+
+func TestTripLifecycleEndpoints(t *testing.T) {
+	// 1.- Assemble the server and space requests in time to exercise lifecycle transitions via HTTP.
+	gin.SetMode(gin.TestMode)
+	manager := trip.NewManager(nil, nil)
+	arbiter := bidding.NewArbiter(nil, bidding.WithTimeout(5*time.Second))
+	validator := auth.NewValidator("top-secret")
+	server := NewServer(arbiter, manager, validator)
+	router := gin.New()
+	server.RegisterRoutes(router)
+
+	perform := func(action string) *httptest.ResponseRecorder {
+		payload, err := json.Marshal(struct {
+			Action string `json:"action"`
+		}{Action: action})
+		if err != nil {
+			t.Fatalf("marshal action: %v", err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/trips/trip-123/state", bytes.NewReader(payload))
+		req.Header.Set("Authorization", "Bearer top-secret")
+		req.Header.Set("Content-Type", "application/json")
+		res := httptest.NewRecorder()
+		router.ServeHTTP(res, req)
+		return res
+	}
+
+	// 2.- Transition the trip through start, pause, resume, and complete actions with short delays to accumulate metrics.
+	steps := []struct {
+		action     string
+		afterSleep time.Duration
+	}{
+		{action: "start", afterSleep: 5 * time.Millisecond},
+		{action: "pause", afterSleep: 5 * time.Millisecond},
+		{action: "resume", afterSleep: 5 * time.Millisecond},
+		{action: "complete", afterSleep: 0},
+	}
+	for _, step := range steps {
+		res := perform(step.action)
+		if res.Code != http.StatusNoContent {
+			t.Fatalf("%s action returned %d", step.action, res.Code)
+		}
+		if step.afterSleep > 0 {
+			time.Sleep(step.afterSleep)
+		}
+	}
+
+	metricsDirect, ok := manager.MetricsFor("trip-123")
+	if !ok {
+		t.Fatalf("manager did not track trip")
+	}
+
+	// 3.- Retrieve metrics and verify the aggregated durations and start timestamp.
+	metricsReq := httptest.NewRequest(http.MethodGet, "/trips/trip-123/metrics", nil)
+	metricsReq.Header.Set("Authorization", "Bearer top-secret")
+	metricsRes := httptest.NewRecorder()
+	router.ServeHTTP(metricsRes, metricsReq)
+
+	if metricsRes.Code != http.StatusOK {
+		t.Fatalf("expected 200 metrics response got %d", metricsRes.Code)
+	}
+	var metrics trip.Metrics
+	if err := json.Unmarshal(metricsRes.Body.Bytes(), &metrics); err != nil {
+		t.Fatalf("decode metrics: %v", err)
+	}
+	if metrics.TotalActive < 2*time.Millisecond {
+		t.Fatalf("unexpected total active: %v", metrics.TotalActive)
+	}
+	if metrics.TotalPaused < time.Millisecond {
+		t.Fatalf("unexpected total paused: %v", metrics.TotalPaused)
+	}
+	if metrics.StartedAt.IsZero() {
+		t.Fatalf("expected non-zero start time")
+	}
+	if metrics.TotalActive != metricsDirect.TotalActive {
+		t.Fatalf("http active duration mismatch: %v vs %v", metrics.TotalActive, metricsDirect.TotalActive)
+	}
+	if metrics.TotalPaused != metricsDirect.TotalPaused {
+		t.Fatalf("http paused duration mismatch: %v vs %v", metrics.TotalPaused, metricsDirect.TotalPaused)
+	}
+	if !metrics.StartedAt.Equal(metricsDirect.StartedAt) {
+		t.Fatalf("http startedAt mismatch: %v vs %v", metrics.StartedAt, metricsDirect.StartedAt)
+	}
+}
