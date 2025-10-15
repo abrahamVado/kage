@@ -72,6 +72,35 @@ class AuthViewModel extends ChangeNotifier {
     }
   }
 
+  Future<AuthSession?> startDemoSession() async {
+    //1.- Provide immediate feedback while the demo session spins up.
+    _state = _state.copyWith(isLoading: true, errorMessage: null);
+    notifyListeners();
+
+    try {
+      //2.- Craft a local-only session used to unlock the rest of the app.
+      const session = AuthSession(token: 'demo-token', userId: 'demo-user');
+
+      //3.- Reuse the existing side effects so downstream features work.
+      await secureStorageService.saveToken(session.token);
+      await webSocketService.connect(session.token);
+      await locationService.startPublishing(webSocketService: webSocketService);
+
+      //4.- Clear loading state and expose the session to the caller.
+      _state = _state.copyWith(isLoading: false);
+      notifyListeners();
+      return session;
+    } catch (_) {
+      //5.- Surface a friendly error if the demo cannot be provisioned.
+      _state = _state.copyWith(
+        isLoading: false,
+        errorMessage: 'Unable to start the demo right now. Please retry.',
+      );
+      notifyListeners();
+      return null;
+    }
+  }
+
   Future<void> logout() async {
     //1.- Clear persisted data and disconnect socket/location streams.
     await locationService.stopPublishing();
