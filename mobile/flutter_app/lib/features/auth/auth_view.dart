@@ -47,6 +47,21 @@ class AuthView extends StatelessWidget {
                   }
                 },
               ),
+              const SizedBox(height: 12),
+              OutlinedButton(
+                onPressed: viewModel.state.isLoading
+                    ? null
+                    : () async {
+                        //1.- Attempt to start a local demo session for quick access.
+                        final session = await viewModel.startDemoSession();
+                        //2.- Mirror the authenticated navigation when the demo succeeds.
+                        if (session != null && context.mounted) {
+                          Navigator.of(context)
+                              .pushReplacementNamed('/dashboard');
+                        }
+                      },
+                child: const Text('Explore Demo'),
+              ),
             ],
           ),
         );
