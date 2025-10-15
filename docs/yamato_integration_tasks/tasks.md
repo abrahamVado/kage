@@ -1,0 +1,29 @@
+# Yamato Service–Backend Integration Tasks
+
+This backlog enumerates the concrete work required to align the Yamato mobile services in `mobile/flutter_app` with the Go backend APIs under `backend/internal`. Each task is focused on wiring existing client-side services and view models to the REST and WebSocket endpoints already implemented (or missing) in the backend so that authentication, bidding, and trip execution flows operate end-to-end.
+
+## Task Backlog
+
+1. **Document shared environment configuration** – Introduce a platform-agnostic configuration file that supplies the Go backend origin (scheme, host, port) to both Flutter services and backend deployment manifests so that `AuthService`, `WebSocketService`, and future HTTP clients read from a single source of truth.
+2. **Expose login endpoint on the backend** – Extend `backend/internal/api/server.go` with a `/auth/login` route that validates credentials through `auth.Validator` (or a new authenticator) and returns the bearer token format expected by `AuthService`.
+3. **Adjust Flutter `AuthService` base paths** – Update `mobile/flutter_app/lib/core/services/auth_service.dart` so that it targets the backend `/auth/login` route (rather than `/api/v1/auth/login`) and propagates backend error messages to the UI.
+4. **Persist authenticated sessions** – Wire `AuthService` to `SecureStorageService` so the bearer token is saved locally and restored across launches before instantiating networking clients.
+5. **Inject authorization headers for HTTP calls** – Implement a lightweight HTTP client wrapper inside `mobile/flutter_app/lib/core/services` that appends the `Authorization` header sourced from secure storage on every request, and retrofit the bidding/trip REST integrations to consume it.
+6. **Add backend token issue tests** – Create Go unit tests (e.g., in `backend/internal/api/server_test.go`) covering the new `/auth/login` happy path and unauthorized flows to guarantee contract stability.
+7. **Guard Flutter auth logic with widget tests** – Add a widget or service test verifying that a successful `AuthService.login` invocation results in secure token persistence and downstream notifier updates.
+8. **Normalize WebSocket handshake parameters** – Update `WebSocketService.connect` so that it targets the hub route pattern `/ws/:role/:room` defined in `backend/internal/ws/hub.go`, passing the authenticated driver role and active trip identifier when connecting.
+9. **Propagate auth tokens to WebSocket upgrades** – Append the bearer token as either a query parameter or header during `WebSocketService.connect` and extend the Gin upgrade handler to validate it through `auth.Validator` before registering the client.
+10. **Synchronize bid event schemas** – Align the backend broadcast payloads emitted by the bidding workflow with the event types (`bid_offer`, `bid_selected`) consumed in `BiddingViewModel._handleEvent`, updating the Go hub publisher and Flutter switch statement together.
+11. **Route bid submissions through REST** – Replace the ad-hoc WebSocket `submit_bid` emission in `BiddingViewModel.submitBid` with an HTTP POST to the existing `/bids/evaluate` endpoint, handling the winner response and reflecting acceptance state in the UI.
+12. **Persist accepted bids server-side** – Ensure `bidding.Arbiter` records winners via its repository implementation so that `/bids/evaluate` triggers durable state changes retrievable by the mobile app (augment `Repository` if additional fields are needed).
+13. **Return evaluation results to clients** – Extend the backend bid evaluation handler to broadcast the winning bid through the WebSocket hub so listening drivers receive the `bid_selected` message without polling.
+14. **Introduce trip action HTTP client** – Create a `TripService` in `mobile/flutter_app/lib/core/services` to invoke the backend `/trips/:id/state` endpoint for `start`, `pause`, `resume`, `cancel`, and `complete` actions sourced from `TripViewModel`.
+15. **Reconcile trip state triggers** – Refactor `TripViewModel` to call the new `TripService` methods for mutating actions while reserving WebSocket emissions for passive telemetry (e.g., elapsed time updates), ensuring the backend `trip.Manager` drives authoritative state.
+16. **Surface trip metrics** – Implement a UI-side fetch (e.g., via `TripService.fetchMetrics`) that calls `/trips/:id/metrics` and displays distance, duration, and pricing in the trip feature summary screen once the backend responds.
+17. **Validate trip action contracts in Go tests** – Expand `backend/internal/api/server_test.go` to cover the `/trips/:id/state` handler, asserting correct status codes for valid actions and error handling for invalid transitions.
+18. **Broadcast trip lifecycle events** – Extend `trip.Manager` to emit WebSocket hub messages on state transitions so that connected rider/driver clients remain synchronized without extra polling.
+19. **Implement frontend listeners for trip updates** – Subscribe `TripViewModel` to the WebSocket lifecycle events introduced above, updating timers and status enums when the backend broadcasts authoritative changes.
+20. **Add end-to-end integration smoke test** – Script a Flutter integration test (under `mobile/flutter_app/test/`) that boots the app with mocked backend responses verifying authentication, bid evaluation, and trip state transitions all succeed using the new REST clients.
+21. **Document deployment alignment steps** – Capture the sequence required to deploy the updated backend routes and mobile configuration (including environment variables and secrets) in the platform handbook to keep DevOps and mobile engineers coordinated.
+
+Each task should include validation by running `go test ./...` for backend changes and the relevant Flutter test suite (`flutter test` or targeted integration tests) to satisfy the project testing mandate.
